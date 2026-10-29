@@ -1,0 +1,14 @@
+{
+  "name": "feed-pesadao",
+  "version": "2.0.0",
+  "description": "Completa o feed do Google da Store Pesadão (tamanho, cor, gênero e faixa etária) a partir do XML da Loja Integrada",
+  "main": "gerar-feed.js",
+  "scripts": {
+    "gerar": "node gerar-feed.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
