@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { enriquecer } = require('./lib/enriquecer');
+const { rotular } = require('./lib/rotulos');
 
 const FEED_URL = process.env.FEED_URL || 'https://www.storepesadao.com.br/xml/f2b52/googlemerchant.xml';
 const SAIDA_DIR = process.env.SAIDA_DIR || path.join(__dirname, 'publico');
@@ -50,6 +51,7 @@ function processarXml(xml) {
     sem_cor: 0,
     exemplos_sem_tamanho: [],
     exemplos_sem_cor: [],
+    rotulos: { custom_label_0: {}, custom_label_1: {}, custom_label_2: {} },
   };
 
   const novo = xml.replace(/<item>([\s\S]*?)<\/item>/g, (inteiro, corpo) => {
@@ -73,6 +75,13 @@ function processarXml(xml) {
         relatorio.adicionados[campo]++;
       }
     }
+    const rotulos = rotular({ title: dados.title, price: valorTag(corpo, 'g:price'), sale_price: valorTag(corpo, 'g:sale_price') });
+    for (const [campo, valor] of Object.entries(rotulos)) {
+      if (!valor || temTag(corpo, `g:${campo}`)) continue;
+      novasTags.push(`<g:${campo}>${escapar(valor)}</g:${campo}>`);
+      relatorio.rotulos[campo][valor] = (relatorio.rotulos[campo][valor] || 0) + 1;
+    }
+
     if (!extra.size && !temTag(corpo, 'g:size')) {
       relatorio.sem_tamanho++;
       if (relatorio.exemplos_sem_tamanho.length < 30) relatorio.exemplos_sem_tamanho.push(`${dados.id} | ${dados.title}`);
