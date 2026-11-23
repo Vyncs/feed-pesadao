@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Lê o XML que a Loja Integrada gera para o Google e completa os campos
 // que faltam (tamanho, cor, gênero e faixa etária).
-// Não muda IDs, preços, estoque nem links: esses continuam vindo da loja.
+// Não muda IDs, estoque nem links: esses continuam vindo da loja.
+// Preço: nos produtos em promoção (coleção SALE da loja), troca o par
+// preço/Pix que a loja manda pelo par "de/por" que aparece no site (lib/promocoes.js).
 //
 // Uso:
 //   node gerar-feed.js                       (baixa o XML da loja)
@@ -12,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { enriquecer } = require('./lib/enriquecer');
 const { rotular } = require('./lib/rotulos');
+const { lerPromocoes, CABECALHOS } = require('./lib/promocoes');
 
 const FEED_URL = process.env.FEED_URL || 'https://www.storepesadao.com.br/xml/f2b52/googlemerchant.xml';
 const SAIDA_DIR = process.env.SAIDA_DIR || path.join(__dirname, 'publico');
@@ -41,7 +44,17 @@ function escapar(t) {
   return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function processarXml(xml) {
+function precoXml(valor) {
+  return `${valor.toFixed(2)} BRL`;
+}
+
+function trocarTag(corpo, tag, valor) {
+  const re = new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`);
+  if (re.test(corpo)) return corpo.replace(re, `<${tag}>${valor}</${tag}>`);
+  return corpo.replace(/(<g:price>[\s\S]*?<\/g:price>)/, `$1\n      <${tag}>${valor}</${tag}>`);
+}
+
+function processarXml(xml, promocoes = new Map()) {
   const relatorio = {
     gerado_em: new Date().toISOString(),
     total_itens: 0,
@@ -52,16 +65,35 @@ function processarXml(xml) {
     exemplos_sem_tamanho: [],
     exemplos_sem_cor: [],
     rotulos: { custom_label_0: {}, custom_label_1: {}, custom_label_2: {} },
+    promocoes: { produtos_lidos: promocoes.size, itens_com_de_por: 0, preco_diferente_do_site: 0, exemplos: [] },
   };
 
-  const novo = xml.replace(/<item>([\s\S]*?)<\/item>/g, (inteiro, corpo) => {
+  const novo = xml.replace(/<item>([\s\S]*?)<\/item>/g, (inteiro, corpoOriginal) => {
     relatorio.total_itens++;
+    let corpo = corpoOriginal;
     const dados = {
       id: valorTag(corpo, 'g:id'),
       item_group_id: valorTag(corpo, 'g:item_group_id'),
       title: valorTag(corpo, 'title'),
       product_type: todosValores(corpo, 'g:product_type'),
     };
+    // Promoção: só troca quando o preço do XML bate com o "por" do site,
+    // para nunca anunciar um preço diferente do que a loja cobra.
+    const promo = dados.item_group_id && promocoes.get(dados.item_group_id);
+    if (promo) {
+      const precoLoja = parseFloat(valorTag(corpo, 'g:price'));
+      if (Math.abs(precoLoja - promo.por) < 0.01) {
+        corpo = trocarTag(corpo, 'g:price', precoXml(promo.de));
+        corpo = trocarTag(corpo, 'g:sale_price', precoXml(promo.por));
+        relatorio.promocoes.itens_com_de_por++;
+        if (relatorio.promocoes.exemplos.length < 10) {
+          relatorio.promocoes.exemplos.push(`${dados.id} | de ${promo.de.toFixed(2)} por ${promo.por.toFixed(2)}`);
+        }
+      } else {
+        relatorio.promocoes.preco_diferente_do_site++;
+      }
+    }
+
     const extra = enriquecer(dados);
     const novasTags = [];
 
@@ -91,7 +123,7 @@ function processarXml(xml) {
       if (relatorio.exemplos_sem_cor.length < 30) relatorio.exemplos_sem_cor.push(`${dados.id} | ${dados.title}`);
     }
 
-    if (!novasTags.length) return inteiro;
+    if (!novasTags.length) return corpo === corpoOriginal ? inteiro : `<item>${corpo}</item>`;
     // Mantém o recuo usado pela loja
     const recuo = (corpo.match(/\n([ \t]+)<[^/]/) || [, '      '])[1];
     const fechamento = corpo.match(/\n?[ \t]*$/)[0];
@@ -104,14 +136,21 @@ function processarXml(xml) {
 async function obterXmlOrigem() {
   const i = process.argv.indexOf('--arquivo');
   if (i !== -1) return fs.readFileSync(process.argv[i + 1], 'utf8');
-  const resp = await fetch(FEED_URL, { headers: { 'User-Agent': 'feed-pesadao/1.0' } });
-  if (!resp.ok) throw new Error(`Não consegui baixar o XML da loja (HTTP ${resp.status})`);
-  return await resp.text();
+  let status;
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    const resp = await fetch(FEED_URL, { headers: { ...CABECALHOS, Accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8' } });
+    if (resp.ok) return await resp.text();
+    status = resp.status;
+    await new Promise((r) => setTimeout(r, 5000 * tentativa));
+  }
+  throw new Error(`Não consegui baixar o XML da loja (HTTP ${status})`);
 }
 
 async function main() {
   const origem = await obterXmlOrigem();
-  const { xml, relatorio } = processarXml(origem);
+  const { mapa, resumo } = await lerPromocoes();
+  const { xml, relatorio } = processarXml(origem, mapa);
+  relatorio.promocoes.leitura = resumo;
 
   if (relatorio.total_itens < MINIMO_ITENS) {
     throw new Error(`O XML da loja veio com só ${relatorio.total_itens} itens. Feed anterior mantido por segurança.`);
@@ -125,6 +164,7 @@ async function main() {
   console.log(`Itens no feed: ${relatorio.total_itens}`);
   console.log(`Com tamanho:   ${pct(relatorio.total_itens - relatorio.sem_tamanho)}`);
   console.log(`Com cor:       ${pct(relatorio.total_itens - relatorio.sem_cor)}`);
+  console.log(`Promoções:     ${relatorio.promocoes.itens_com_de_por} itens com de/por (${mapa.size} produtos lidos${resumo.erro ? `, erro: ${resumo.erro}` : ''})`);
   console.log(`Feed salvo em ${path.join(SAIDA_DIR, 'feed-google.xml')}`);
 }
 
