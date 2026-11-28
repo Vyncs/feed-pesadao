@@ -2,8 +2,11 @@ name: Atualizar feed do Google
 
 on:
   schedule:
-    # Todo dia às 05:17 de Brasília (08:17 UTC)
+    # 4 vezes por dia (Brasília): 05:17, 11:17, 17:17 e 22:17
     - cron: "17 8 * * *"
+    - cron: "17 14 * * *"
+    - cron: "17 20 * * *"
+    - cron: "17 1 * * *"
   workflow_dispatch: # botão "Run workflow" para rodar na hora
 
 permissions:
