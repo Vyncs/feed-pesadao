@@ -12,7 +12,13 @@ XML da Loja Integrada  →  gerar-feed.js  →  feed-google.xml  →  Merchant C
 
 - **Não usa chave de API.** Só lê o XML público que a loja já gera em
   `https://www.storepesadao.com.br/xml/f2b52/googlemerchant.xml`.
-- **Não muda IDs, preços, estoque nem links.** Esses dados continuam vindo da loja.
+- **Não muda IDs, estoque nem links.** Esses dados continuam vindo da loja.
+- **Preço "de/por" da página de cada produto.** O XML da loja manda o preço promocional
+  como preço e o do Pix como promoção. O bot lê o preço cheio e o promocional da página
+  de cada produto (`lib/precos-site.js`) e manda o par certo; sem promoção, só o preço
+  cheio (o desconto do Pix não vale para todo pagamento, então não vai como promoção).
+  Tamanhos com preços diferentes entre si ficam com o preço do XML.
+- `custom_label_3` = desconto real: `sem-desconto`, `desc-ate-19`, `desc-20-29`, `desc-30-mais`.
 - Só adiciona `g:size`, `g:color`, `g:gender` e `g:age_group` quando o item ainda não tem.
 - Se a loja devolver menos de 100 itens (erro, site fora do ar), o feed anterior é mantido.
 
@@ -27,7 +33,7 @@ Teste com o XML real (29/10/2026, 4.498 itens): tamanho em 99,9% dos itens e cor
 4. O feed fica em: `https://SEU-USUARIO.github.io/feed-pesadao/feed-google.xml`
    e o resumo em `.../relatorio.json`.
 
-Depois disso ele roda sozinho todo dia às 05:17.
+Depois disso ele roda sozinho 4 vezes por dia (05:17, 11:17, 17:17 e 22:17).
 
 ## Ligar no Merchant Center
 
